@@ -1,0 +1,450 @@
+#!/bin/bash
+#=============================================================================
+#
+#        FILE:  query_subnet
+#
+#       USAGE:  query_subnet [-d|o|p] [-n domain] [-w wait_time] [-qvyh] CIDR-IP/mask
+#
+# DESCRIPTION:  given a CIDR-formatted network or host address, the program
+#               queries DNS for each host address in the network range to find its
+#               hostname, then pings it to check its status. Pinging can be disabled
+#               if all you need is to see what host addresses in the network are
+#               actually defined in DNS. DNS queries can be disabled if all you need
+#               is to see what IP host addresses are active on the network.
+#
+#               Output is CSV for importing into a spreadsheet.
+#
+#      AUTHOR:  Jon Gauthier, N234, MITRE, jgauthier@mitre.org
+#
+#=============================================================================
+#                        BACKGROUND INFORMATION
+#=============================================================================
+# A little bit of background cribbed from https://study-ccna.com/subnet-mask/
+# and from https://www.techtarget.com/searchnetworking/definition/CIDR
+# 
+# An IP address is divided into two parts: network and host parts. For example,
+# an IP class A address consists of 8 bits identifying the network and 24 bits
+# identifying the host. This is because the default subnet mask for a class A
+# IP address is 8 bits long (or, written in dotted decimal notation, 255.0.0.0).
+# What does it mean? Like an IP address, a subnet mask also consists of 32 bits.
+# Computers use it to determine the network part and the host part of an address.
+# The 1s in the subnet mask represent a network part, the 0s a host part.
+# 
+# Let’s say that we have the IP address of 10.0.0.1 with a subnet mask
+# of 24 bits (255.255.255.0). First, we need to convert the IP address to binary:
+# 
+# IP address:       10.0.0.1 = 00001010.00000000.00000000.00000001
+# Subnet mask: 255.255.255.0 = 11111111.11111111.11111111.0000000
+# 
+# Computers then use the AND operation to determine the network number:
+# 00001010.00000000.00000000.00000001 = 10.0.0.1
+# 11111111.11111111.11111111.00000000 = 255.255.255.0
+# -----------------------------------------------
+# 00001010.00000000.00000000.00000000 = 10.0.0.0 <- network number
+#
+# CIDR (Classless Inter-Domain Routing) allows more granuality of subnetting than
+# the standard Class A (255.0.0.0, 255 networks of > 16 million hosts each), Class B
+# (255.255.0.0, 65,535 networks of 65,535 hosts each), and Class C (255.255.255.0,
+# > 16 million networks of 255 hosts each). CIDR is based on Variable Length Subnet
+# Masking (VLSM), which allows dividing an IP address space into a hierarchy of subnets
+# of different sizes, making it possible to create subnetworks with different host counts
+# without wasting large numbers of addresses.
+#
+# CIDR addresses are made up of two sets of numbers: a prefix, which is the binary
+# representation of the network address -- similar to what would be seen in a normal
+# IP address -- and a suffix, which declares the total number of bits in the entire
+# address. For example, CIDR notation may look like: 192.168.129.23/17 -- with 17
+# being the number of bits in the address. IPv4 addresses allow a maximum of 32 bits.
+#=============================================================================
+
+#=============================================================================
+# Define global default values:                                             
+#=============================================================================
+version="1.0"
+script_name="$(basename "$0")"
+sleep_wait_time=0.125       # Overridden by -w
+ping_if_dns=false           # Overridden by -d
+dns_only=false              # Overridden by -o
+quiet_mode=false            # Overridden by -q
+skip_dns=false              # Overridden by -p
+verbose=false               # Overridden by -v
+override=false              # Overridden by -y
+short_help_text=("Usage: $script_name [-d|o|p] [-n domain] [-w wait_time] [-qvyh] CIDR IP/mask") 
+long_help_text=("\nVersion $version
+
+Optional arguments:
+[-d|o|p]\t- mutually exclusive options, where:
+  -d\t\t- ping host address only if it's in DNS,
+  -o\t\t- only query DNS, skipping pinging each host,
+  -p\t\t- ping each host address in the range, skipping DNS lookups.
+[-n DOMAIN]\t- overrides default of 'mitre.org' or domain found in /etc/resolv.conf.
+[-w WAIT_TIME]\t- delay in seconds between DNS lookups (defaults to $sleep_wait_time sec)
+[-q]\t\t- minimal output only 
+[-v]\t\t- print variables and other info (useful for debugging)
+[-y]\t\t- overide check against scanning more than 1022 hosts (checks for subnet mask
+\t\t  length less than 23 bits)
+[-h]\t\t- print extended help info
+
+CIDR IP/mask  - is a valid CIDR-style IPv4 network or host address:
+\te.g. 10.10.10.0/24
+
+The script automatically calculates the proper network address if you specify a host address
+and a netmask length, so if you don't know the network address but you do know the address of
+a specific host, you can specify it and an arbitrary netmask instead of having to figure out
+the subnet address yourself.
+
+To ping a smaller range within a subnet, specify a larger netmask- e.g. /26 instead of /24.
+Be careful if pinging a range larger than a natural Class C - it can take a long time to run
+thru all the addresses in the range.
+
+IPv6 addresses not supported at this time (for obvious reasons!).
+
+To save the output, redirect to a file using 'tee' rather than just '>':
+\t$script_name 10.29.2.0/24 | tee 10.29.2.0.dns_hosts
+That way you can see the output as well as save it to a file.")
+
+# get domain name from /etc/resolv.conf
+domain="$( grep '^search' /etc/resolv.conf | cut -d ' ' -f2 )"
+    # if it can't find it in resolv.conf, then default to "mitre.org"
+if [ -z "$domain" ]; then
+    domain="mitre.org" # Overridden by -n 
+fi
+
+# Ping's -W option ("waittime" in MacOS or BSD, and "timeout" in Linux) is expected to
+# be specified in milliseconds in MacOS/BSD, or in seconds in GNU/Linux.
+# so check to see which OS we're running under and set "-W" appropriately
+# set ping options to no lookup for hostname (-n), one packet (-c 1), quiet output (-q),
+# and wait (-W) up to 250 msec for MacOS or 1 sec for Linux
+if [[ $OSTYPE == "linux-gnu"* ]]; then
+    ping_options="-n -c 1 -q -W 0.125"
+else
+    ping_options="-n -c 1 -q -W 250" # Assume we're MacOS or BSD
+fi
+
+#=============================================================================
+# Let's define a few functions for use later:                               
+#=============================================================================
+
+# abort and print error message
+#=============================================================================
+err_abort () {
+    echo "ERROR: $*." >&2
+    echo
+    echo -e "${short_help_text[@]}"
+    exit 1
+}
+
+# Parse command line option arguments
+#=============================================================================
+function get_cmd_line_args() {
+    # echo "Options = " "$@"
+    OPTION=$1
+    OPTIND=1
+    while getopts 'n:dopqvw:yh' OPTION
+    do
+        case "$OPTION" in
+            # check that only one of options d,o, or p is specified:
+            d)  if [[ $skip_dns == true ]] || [[ $dns_only == true ]]; then
+                        err_abort "Specify only one of options -d, -o, or -p"
+                fi
+                ping_if_dns=true ;;
+
+            o)  if [[ $ping_if_dns == true ]] || [[ $skip_dns == true ]]; then
+                        err_abort "Specify only one of options -d, -o, or -p"
+                fi
+                dns_only=true ;;
+
+            p)  if [[ $dns_only = true ]] || [[ $ping_if_dns == true ]]; then
+                        err_abort "Specify only one of options -d, -o, or -p"
+                fi
+                skip_dns=true ;;
+
+            # Options n, v, w and y can be specified with others, so no checks:
+            n)  domain="$OPTARG" ;;
+
+            q)  quiet_mode=true ;; # output only column headings and CSV data
+
+            v)  verbose=true ;; # prints most variables used
+
+            w)  sleep_wait_time="$OPTARG" ;;
+
+            y)  override=true ;;
+
+            h)  echo -e "${short_help_text[@]}" "${long_help_text[@]}"
+                exit 1 ;;
+
+            ?)  echo -e "${short_help_text[@]}"
+                exit 1 ;;
+        esac
+    done
+    shift "$((OPTIND-1))"
+
+    # Now that we know all that, let's make sure a valid CIDR notated IP address given
+    # is a valid one 
+    # First, check to see that the command line argument "$1" was actually given
+    if [ -z "$1" ]; then
+            # if no argument is passed, tell user
+            echo "No subnet or host address given. Must be in CIDR format, e.g. 10.0.0.0/24"
+            echo -e "${short_help_text[@]}"
+            exit 1
+        else
+            # Ok, now verify it is a valid CIDR-notated IP address or network, so
+            # call the function valid_cidr defined earlier
+            valid_cidr "$1"
+            if [[ $? -eq 1 ]]; then
+                echo "Given subnet or host address is invalid. Must be in CIDR format, e.g. 10.0.0.0/24"
+                echo -e "${short_help_text[@]}"
+                exit 1
+            fi
+    fi
+    cidr_address=$1
+}
+
+# valid_cidr() checks the validity of the given network address argument
+#=============================================================================
+function valid_cidr() {
+    local IFS='./' ip=$1 stat=1 # Declare local variables
+
+    # Test to make sure the argument $ip is in dotted-decimal format
+    # Will not work for IPv6 hex format
+    if [[ $ip =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\/[0-9]{1,2}$ ]]; then
+            ip=($ip)
+            # Now verify each octet is in the range 0-255, and mask 0-32
+            [[ ${ip[0]} -le 255 && ${ip[1]} -le 255 && \
+               ${ip[2]} -le 255 && ${ip[3]} -le 255 && \
+               ${ip[4]} -le 32 ]]
+            stat=$? # Set status before returning
+    fi
+    return $stat # returns 0 if valid, or 1 if not
+}
+
+# ip2int(): converts the IP address argument passed in dotted decimal format
+#           [0-255].[0-255].[0-255].[0-255] to a 32-bit integer address $2
+#           for easier math manipulation
+# calling convention: integer_addr_variable=$(ip2int $dotted_decimal_variable)
+#=============================================================================
+function ip2int() {
+    local IFS='.' ip_addr=$1 int_addr # Declare local variables
+
+    if [[ $ip_addr =~ ([[:digit:]]+)\.([[:digit:]]+)\.([[:digit:]]+)\.([[:digit:]]+) ]]
+        then
+            int_addr=$(( (BASH_REMATCH[1] << 24) + (BASH_REMATCH[2] << 16) + \
+                         (BASH_REMATCH[3] << 8) + BASH_REMATCH[4]))
+    fi
+    echo "$int_addr" # ip2int returns $int_address as $2
+}
+
+# int2ip(): converts the given 32-bit integer number $1 back into a 
+#           dotted-decimal IP address $2
+# calling convention: int2ip $integer_number_variable dotted_decimal_variable
+#=============================================================================
+function int2ip() {
+    local int_addr=$1 b1 b2 b3 b4 ip_addr # Declare local variables
+
+    b1=$(( (int_addr & 0xFF000000) >> 24))
+    b2=$(( (int_addr & 0xFF0000) >> 16))
+    b3=$(( (int_addr & 0xFF00) >> 8))
+    b4=$(( (int_addr & 0xFF ) ))
+    ip_addr="$b1.$b2.$b3.$b4"
+    echo "$ip_addr" # returns the 32-bit number in dotted decimal format as $2
+}
+
+#=============================================================================
+# MAIN BODY OF query_subnet SCRIPT
+#=============================================================================
+get_cmd_line_args "$@"
+
+if [[ $verbose == true ]]; then
+    echo "# Variables:"
+    echo "# domain (-n) = $domain, sleep_wait_time (-w) = $sleep_wait_time, quiet_mode (-q) = $quiet_mode"
+    echo "# verbose (-v) = $verbose, ping_if_dns (-d) = $ping_if_dns, dns_only =$dns_only"
+    echo "# skip_dns (-p) = $skip_dns, ping_options = $ping_options"
+    echo "#"
+fi
+
+# Split the given CIDR address into an ip address and a netmask length using BASH_REMATCH
+[[ $cidr_address =~ ^([0-9\.]+)/([0-9]+)$ ]]
+# So, if given 192.168.129.23/24,
+ip_addr=${BASH_REMATCH[1]}     # ip_addr=192.168.129.23
+netmask_len=${BASH_REMATCH[2]} # and netmask_len=24
+
+num_of_hosts=$(( 2**(32-netmask_len)-2 ))
+
+if [[ $netmask_len -le 23 ]] && [[ $override == false ]]; then
+    # Make sure the user really wants to scan 2**23-2 (1022) hosts
+    # Specify -y option to override this check
+    while true
+    do
+        read -rp "Are you sure you want to ping $num_of_hosts hosts? (yes/no) " yn
+        case $yn in
+            yes|y|Y)
+                echo "Ok - if you insist";
+                break ;;
+            no|n|N)
+                echo "Smart move. Exiting";
+                exit ;;
+        esac
+    done
+fi
+
+# Before we can calculate the dotted-decimal network address and the network broadcast address 
+# (the beginning and end of the network), we need to do some binary math.
+#
+# First we need to convert netmask_len into a 32-bit integer number.
+# For example, a netmask of 24 bits out of 32 equates to
+# 11111111.11111111.11111111.00000000 dotted binary notation,
+# or 255.255.255.0 dotted decimal notation)
+zeros=$(( 32-netmask_len )) # e.g., 24 bits out of 32 bits = 32 - 24, or 8 zeros
+netmask_num=0
+
+for (( i=0; i<zeros; i++ ))
+do
+    netmask_num=$(( (netmask_num << 1) ^ 1 ))
+done
+
+# Convert the integer netmask into an integer number
+# by doing a bitwise XOR (^) operation
+netmask_num=$(( netmask_num ^ 0xFFFFFFFF )) # e.g. a netmask length of 24 yields 32-bit number of 4294967040
+
+# Now that we have the integer netmask number, convert it into a standard
+#dotted-decimal netmask using the "toaddr() function defined earlier", eg. 255.255.255.0
+netmask=$(int2ip "$netmask_num") # Use the "toaddr" function to convert the 32-bit int netmask 
+                              # to dotted-decimal notation
+
+# We need to check to see if the dotted-decimal address given is a network address or a host address
+# To do this, first we convert ipaddr to a 32-bit integer using the function "ip2int" defined earlier
+ip_addr_num=$(ip2int "$ip_addr")
+
+# Next, we flip/invert the netmask so we mask the host portion,
+# e.g. 255.255.255.0 -> 0.0.0.255,
+# by doing a bitwise XOR (^) operation:
+inv_netmask_num=$(( 0xFFFFFFFF ^ netmask_num ))
+
+# Next, we calculate the beginning, or network number (as an integer) by doing a bitwise AND (&) operation:
+network_num=$(( ip_addr_num & netmask_num ))
+
+# Then we use the function "int2ip" defined earlier to convert that integer network number $networknum
+# back to dotted-decimal format as the variable $network
+network_addr=$(int2ip $network_num )
+
+# Next we can calculate the broadcast address by doing a bitwise OR (|) with the inverted netmask number
+# and the network number:
+broadcast_num=$(( inv_netmask_num | network_num ))
+
+# Now we convert that integer network number to dotted-decimal
+broadcast_addr=$(int2ip $broadcast_num)
+
+# Get the first and last host addresses in the range:
+if [[ $netmask_len == 31 ]]; then               # Check for special case of netmask = 31 or 32
+    ipaddr_first=$network_addr                  # If 31 (RFC 3021), then network_addr =
+    ipaddr_first_num=$(ip2int "$ipaddr_first")  # ipaddr_first, and broadcast_addr = ipaddr_last
+    ipaddr_last=$broadcast_addr
+    ipaddr_last_num=$(ip2int "$ipaddr_last")
+elif [[ $netmask_len == 32 ]]; then             # Check for special case of netmask = 32
+    ipaddr_first=$network_addr                  # In this case network, broadcast and host
+    ipaddr_first_num=$(ip2int "$ipaddr_first")  # address are all the same
+    ipaddr_last=$ipaddr_first
+    ipaddr_last_num=$ipaddr_first_num
+else                                            # General case of netmask = 1-30
+    ipaddr_first_num=$(( network_num+1 ))       # Calculate integer number of first host in range
+    ipaddr_first=$(int2ip $ipaddr_first_num)    # convert to dotted decimal format
+    ipaddr_last_num=$(( broadcast_num-1 ))      # Calculate integer number of last host in range
+    ipaddr_last=$(int2ip $ipaddr_last_num )     # convert to dotted decimal format
+fi
+
+if [[ $quiet_mode == false ]]; then
+    echo "# Given $cidr_address"
+    echo "# Network address: $network_addr"
+    echo "# Netmask: $netmask"
+    echo "# Broadcast address: $broadcast_addr"
+    if [[ $netmask_len != 32 ]]; then # Special case of a host route where we have only a single host address
+        echo -n "# $num_of_hosts host addresses, $ipaddr_first to $ipaddr_last, will be "
+    else
+        echo -n "# Single host address of $ipaddr_first will be "
+    fi
+    if [[ $skip_dns == true ]]; then
+        echo "pinged (DNS query skipped)."
+    elif [[ $dns_only == true ]]; then
+        echo "queried in DNS only (not pinged)."
+    elif [[ $ping_if_dns == true ]]; then
+        echo "queried in DNS; if found they will be pinged."
+    else
+        echo "queried in DNS then pinged."
+    fi
+fi
+
+if [[ $ping_if_dns == true ]]; then
+        echo "# This may take a while if most host addresses are not in DNS..."
+fi
+
+# Echo column headings:
+echo -n "IP address"
+if [[ $skip_dns == false ]]; then 
+    echo -n ", DNS Name" # If $skip_dns = false, we're doing a DNS query so
+                         # we print the "DNS Name" column label
+fi
+
+if [[ $dns_only == false ]]; then
+    echo ", Status"      # If $dns_only = false, we're going to ping the hosts, so
+                         # we print the "Status" column label
+else
+        echo ""
+fi
+
+for (( host_num=ipaddr_first_num; host_num<$(( ipaddr_last_num+1 )); host_num++ ))
+do {
+    output_str="" # clear output string from previous hostaddr
+    found_in_dns=false # reset $found_in_dns flag from previous hostaddr
+    # Convert the integer host IP number to a standard dotted decimal IP address
+    #toaddr $hostnum hostaddr
+    host_addr=$(int2ip "$host_num")
+    sleep "$sleep_wait_time" # be kind to the DNS server. We're an unauthorized user, so
+                             # we don't want to slam the DNS server with a slew of
+                             # back-to-back querys
+    if [[ $skip_dns == false ]]; then # if not skipping DNS
+        # this block queries DNS
+        dns_query="$( dig -x "$host_addr" +short 2>&1 | grep "$domain" )"
+        echo -n "$dns_query" > /dev/null # execute our dig DNS query
+        if [[ -z "$dns_query" ]]; then # if IP address not found in DNS
+            output_str="${host_addr}, No entry"
+        else
+            found_in_dns=true 
+            # Host's IP address found in DNS. Dig responds with a fully qualified domain
+            # name, so strip the domain - leave only hostname:
+            dns_query=${dns_query//.$domain/}
+            # If there are aliases for the host found in DNS, dig reports them on separate lines.
+            # So let's replace newlines with "/" separator between the official hostname
+            # and any aliases, e.g.:
+            #   hostname
+            #   alias1
+            #   alias2
+            # becomes 'hostname/alias1/alias2'
+            dns_query=${dns_query//$'\n'/\/}
+            # %. below deletes the trailing '.' that dig reports at the end of a hostname:'
+            output_str="${host_addr}, ${dns_query%.}"
+        fi
+        if [[ $dns_only == true ]]; then
+            echo "$output_str"
+        fi
+    fi
+    # Now ping the host by default, or skip if:
+    #   dns_only=TRUE, OR (ping_if_dns=TRUE AND found_in_dns=FALSE)
+    if [[ $dns_only == true ]] || \
+        { [[ $ping_if_dns == true ]] && [[ $found_in_dns == false ]]; }; then
+            : # Skip pinging host
+    else    
+        if [[ $skip_dns == true ]]; then    # we skipped the DNS query (and printing the
+                                            # host address),so print host address here
+            output_str="${host_addr}"
+        fi
+        ping $ping_options $host_addr > /dev/null;
+        if [[ $? -eq 0 ]]; then
+            output_str="${output_str}, Active"
+        else
+            output_str="${output_str}, Offline"
+        fi
+        echo "$output_str"
+    fi
+} # Repeat until the last host address in the range is done
+done # end of main loop
+exit
