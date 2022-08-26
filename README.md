@@ -1,4 +1,4 @@
-# query_subnet
+# query_subnet - a bash script
 
 ## Intro
 Given a CIDR-formatted network or host address, the script queries DNS for each host address in the network range to find its  hostname, then pings it to check its status. Pinging can be disabled if all you need is to see what host addresses in the network are actually defined in DNS. DNS queries can be disabled if all you need is to see what IP host addresses are active on the network.
