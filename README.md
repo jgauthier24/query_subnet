@@ -56,6 +56,25 @@ The script automatically calculates the proper network address if you specify a 
 
 To ping a smaller range within a subnet, specify a larger netmask- e.g. /26 instead of /24. Be careful if pinging a range larger than a natural Class C - it can take a long time to run thru all the addresses in the range.
 
+### Example Output
+```
+jgauthier@localhost:~$ ./query_subnet 192.168.129.23/25
+# Given 192.168.129.23/25
+# Network address: 192.168.129.0
+# Netmask: 255.255.255.128
+# Broadcast address: 192.168.129.127
+# 126 host addresses, 192.168.129.1 to 192.168.129.126, will be queried in DNS then pinged.
+IP address, DNS Name, Status
+192.168.129.1, local-router, Active
+192.168.129.2, No entry, Offline
+192.168.129.3, my-pc, Active
+192.168.129.4, my-server, Active
+192.168.129.5, my-phone, Offline
+192.168.129.6, No entry, Offline
+192.168.129.7, No entry, Offline
+...
+```
+
 IPv6 addresses not supported at this time.
 
 To save the output, redirect to a file using 'tee' rather than just '>':
