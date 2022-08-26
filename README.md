@@ -26,7 +26,7 @@ Computers then use the AND operation to determine the network number:
 ```
 CIDR (Classless Inter-Domain Routing) allows more granuality of subnetting than the standard Class A (255.0.0.0, 255 networks of > 16 million hosts each), Class B (255.255.0.0, 65,535 networks of 65,535 hosts each), and Class C (255.255.255.0, > 16 million networks of 255 hosts each). CIDR is based on *Variable Length Subnet Masks* (VLSM), which allows dividing an IP address space into a hierarchy of subnets of different sizes, making it possible to create subnetworks with different host counts without wasting large numbers of addresses.
 
-CIDR addresses are made up of two sets of numbers: a prefix, which is the binary representation of the network address, similar to what would be seen in a normal IP address, and a suffix which declares the total number of bits in the entire address. For example, CIDR notation may look like `192.168.129.23/17`, with 17 being the number of bits in the address. IPv4 addresses allow a maximum of 32 bits.
+CIDR addresses are made up of two sets of numbers: a prefix, which is the binary representation of the network address, similar to what would be seen in a normal IP address, and a suffix which declares the total number of bits in the entire address. For example, CIDR notation may look like `192.168.129.23/17`, with 17 being the number of bits in the address. 17 bits of subnet mask equates to 255.255.128.0 in dotted-decimal notation.
 
 ## Usage
 
