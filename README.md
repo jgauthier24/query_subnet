@@ -60,6 +60,6 @@ IPv6 addresses not supported at this time.
 
 To save the output, redirect to a file using 'tee' rather than just '>':
 ```
-query_subnet 10.29.2.0/24 | tee 10.29.2.0.dns_hosts
+query_subnet 10.10.10.0/24 | tee 10.10.10.0.scan
 ```
 That way you can see the output as well as save it to a file.
