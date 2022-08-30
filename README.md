@@ -16,7 +16,7 @@ Let’s say that somone gave us an IP address of 10.0.0.1 with a subnet mask of 
 IP address:       10.0.0.1 = 00001010.00000000.00000000.00000001
 Subnet mask: 255.255.255.0 = 11111111.11111111.11111111.00000000
 ``` 
-Computers then use the logical AND operation to determine the network number:
+Computers then use the logical **AND** operation to determine the network number:
 
 ```
 00001010.00000000.00000000.00000001 = 10.0.0.1
@@ -61,7 +61,7 @@ To ping a smaller range within a subnet, specify a larger netmask- e.g. /26 inst
 
 ### Example Output
 ```
-jgauthier@localhost:~$ ./query_subnet 192.168.129.23/25
+user@localhost:~$ ./query_subnet 192.168.129.23/25
 # Given 192.168.129.23/25
 # Network address: 192.168.129.0
 # Netmask: 255.255.255.128
