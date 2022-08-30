@@ -8,15 +8,15 @@ Output is CSV for importing into a spreadsheet.
 ## Background Information
 A little bit of background cribbed from https://study-ccna.com/subnet-mask/ and from https://www.techtarget.com/searchnetworking/definition/CIDR
 
-An IP address is divided into two parts: *network* and *host* parts. For example, an IP class A address consists of 8 bits identifying the network and 24 bits identifying the host. This is because the default subnet mask for a class A IP address is 8 bits long (or, written in dotted decimal notation, 255.0.0.0). What does it mean? Well, like an IP address, a subnet mask also consists of 32 bits. Computers use it to determine the network part and the host part of an address. The 1s in the subnet mask represent a network part, the 0s a host part.
+An IP address is divided into two parts: *network* and *host* parts. For example, an IP class A address consists of 8 bits identifying the network and 24 bits identifying the host. This is because the default subnet mask for a class A IP address is 8 bits long (or, written in dotted decimal notation, 255.0.0.0). What does it mean? Like an IP address, a subnet mask also consists of 32 bits. Computers use it to determine the network part and the host part of an address. `1's` in the subnet mask represent the network part, `0's` the host part.
 
-Let’s say that we have the IP address of 10.0.0.1 with a subnet mask of 24 bits (255.255.255.0). First, we need to convert the IP address to binary:
+Let’s say that somone gave us an IP address of 10.0.0.1 with a subnet mask of 255.255.255.0. First, we need to convert the IP address and mask to binary:
 
 ```
 IP address:       10.0.0.1 = 00001010.00000000.00000000.00000001
-Subnet mask: 255.255.255.0 = 11111111.11111111.11111111.0000000
+Subnet mask: 255.255.255.0 = 11111111.11111111.11111111.00000000
 ``` 
-Computers then use the AND operation to determine the network number:
+Computers then use the logical AND operation to determine the network number:
 
 ```
 00001010.00000000.00000000.00000001 = 10.0.0.1
@@ -26,7 +26,10 @@ Computers then use the AND operation to determine the network number:
 ```
 CIDR (Classless Inter-Domain Routing) allows more granuality of subnetting than the standard Class A (255.0.0.0, 255 networks of > 16 million hosts each), Class B (255.255.0.0, 65,535 networks of 65,535 hosts each), and Class C (255.255.255.0, > 16 million networks of 255 hosts each). CIDR is based on *Variable Length Subnet Masks* (VLSM), which allows dividing an IP address space into a hierarchy of subnets of different sizes, making it possible to create subnetworks with different host counts without wasting large numbers of addresses.
 
-CIDR addresses are made up of two sets of numbers: a prefix, which is the binary representation of the network address, similar to what would be seen in a normal IP address, and a suffix which declares the total number of bits in the entire address. For example, CIDR notation may look like `192.168.129.23/17`, with 17 being the number of bits in the address. 17 bits of subnet mask equates to 255.255.128.0 in dotted-decimal notation.
+CIDR addresses in dotted decimal format are made up of a prefix, similar to what would be seen in a normal IP address, and a suffix which declares the total number of bits in the network portion of the address. For example, CIDR notation may look like `192.168.129.23/17`, with 17 being the number of bits in the address. 17 bits of subnet mask equates to 255.255.128.0 in dotted-decimal notation:
+```
+11111111.11111111.10000000.00000000 = 255.255.128.0
+```
 
 ## Usage
 
